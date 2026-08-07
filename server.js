@@ -2,48 +2,53 @@ const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
-const cors = require("cors");
 
 const app = express();
-app.use(cors());
-
-const upload = multer({ dest: "scripts/" });
 
 if (!fs.existsSync("scripts")) {
     fs.mkdirSync("scripts");
 }
 
-app.get("/", (req, res) => {
-    res.send("API Online");
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, "scripts"),
+    filename: (req, file, cb) => {
+        const id = Math.random().toString(36).substring(2, 10);
+        cb(null, id + ".lua");
+    }
 });
 
-app.post("/upload", upload.single("script"), (req, res) => {
-    const name = req.body.name;
+const upload = multer({ storage });
 
-    if (!name || !req.file) {
-        return res.status(400).send("Missing name or file");
+app.post("/upload", upload.single("file"), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: "No file" });
     }
 
-    fs.renameSync(
-        req.file.path,
-        path.join("scripts", `${name}.lua`)
-    );
+    const id = path.parse(req.file.filename).name;
 
     res.json({
         success: true,
-        loader: `loadstring(game:HttpGet("${req.protocol}://${req.get("host")}/api/${name}"))()`
+        id,
+        loader: `loadstring(game:HttpGet("https://ui-f.onrender.com/script/${id}"))()`
     });
 });
 
-app.get("/api/:name", (req, res) => {
-    const file = path.join("scripts", `${req.params.name}.lua`);
+app.get("/script/:id", (req, res) => {
+    const file = path.join(__dirname, "scripts", req.params.id + ".lua");
 
     if (!fs.existsSync(file)) {
         return res.status(404).send("Not Found");
     }
 
-    res.type("text/plain");
-    res.send(fs.readFileSync(file, "utf8"));
+    res.sendFile(file);
 });
 
-app.listen(process.env.PORT || 3000);
+app.get("/", (req, res) => {
+    res.send("API Online");
+});
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+    console.log("Server running on " + PORT);
+});
