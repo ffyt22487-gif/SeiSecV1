@@ -1,285 +1,158 @@
+require('dotenv').config();
+
+// 1. เช็กตัวแปร Environment ก่อนเริ่มเซิร์ฟเวอร์
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+    console.error("Missing SUPABASE_URL or SUPABASE_KEY");
+    process.exit(1);
+}
+
 const express = require("express");
 const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
-
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-const SCRIPT_DIR = path.join(__dirname, "scripts");
-const DB_FILE = path.join(__dirname, "database.json");
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_KEY
+);
+const BUCKET = process.env.SUPABASE_BUCKET || "scripts";
 
-if (!fs.existsSync(SCRIPT_DIR)) {
-  fs.mkdirSync(SCRIPT_DIR);
-}
-
-if (!fs.existsSync(DB_FILE)) {
-  fs.writeFileSync(DB_FILE, "[]");
-}
-
-function readDB() {
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-}
-
-function saveDB(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-}
-
-function makeID() {
-  let id;
-  do {
-    id = Math.random().toString(36).substring(2, 10);
-  } while (readDB().find(v => v.id === id));
-  return id;
-}
-
-const storage = multer.diskStorage({
-  destination(req, file, cb) {
-    cb(null, SCRIPT_DIR);
-  },
-  filename(req, file, cb) {
-    if (req.params.id) {
-      cb(null, req.params.id + ".lua");
-    } else {
-      cb(null, makeID() + ".lua");
+// 2. จำกัดขนาดไฟล์ 5 MB
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024
     }
-  }
 });
 
-const upload = multer({ storage });
+async function makeID() {
+  while (true) {
+    const id = Math.random().toString(36).substring(2, 10);
+    const { data } = await supabase.from("scripts").select("id").eq("id", id).maybeSingle();
+    if (!data) return id;
+  }
+}
 
-app.get("/", (req, res) => {
-    const db = readDB();
-    res.send(`
+app.get("/", async (req, res) => {
+  const { data: db } = await supabase.from("scripts").select("*");
+  const scripts = db || [];
+  res.send(`
 <!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>SEI HUB</title>
+<html><head><meta charset="UTF-8"><title>SEI HUB</title>
 <style>
-body{
-margin:0;
-background:#0f172a;
-font-family:Arial;
-display:flex;
-justify-content:center;
-align-items:center;
-height:100vh;
-color:white;
-}
-.box{
-background:#111827;
-padding:40px;
-border-radius:20px;
-text-align:center;
-box-shadow:0 0 30px #00bfff55;
-width:420px;
-}
-h1{color:#00bfff;margin:0;}
-p{color:#d1d5db;}
-.stat{
-margin-top:20px;
-padding:15px;
-background:#1f2937;
-border-radius:10px;
-}
-</style>
-</head>
-<body>
-<div class="box">
-<h1>🛡 SEI HUB</h1>
-<p>สคริปต์นี้ถูกป้องกันโดย <b>SEI HUB</b></p>
-<div class="stat">
-📂 Scripts : ${db.length}<br>
-⬇ Downloads : ${db.reduce((a,b)=>a+b.downloads,0)}
-</div>
-<p style="margin-top:20px;">Unauthorized access is prohibited.</p>
-</div>
-</body>
-</html>
+body{margin:0;background:#0f172a;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;color:white;}
+.box{background:#111827;padding:40px;border-radius:20px;text-align:center;box-shadow:0 0 30px #00bfff55;width:420px;}
+h1{color:#00bfff;margin:0;}p{color:#d1d5db;}
+.stat{margin-top:20px;padding:15px;background:#1f2937;border-radius:10px;}
+</style></head><body>
+<div class="box"><h1>🛡 SEI HUB</h1><p>สคริปต์นี้ถูกป้องกันโดย <b>SEI HUB</b></p>
+<div class="stat">📂 Scripts : ${scripts.length}<br>⬇ Downloads : ${scripts.reduce((a,b)=>a+b.downloads,0)}</div>
+<p style="margin-top:20px;">Unauthorized access is prohibited.</p></div></body></html>
 `);
 });
 
-app.post("/upload", upload.single("file"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: "No file" });
-  }
-  const id = path.parse(req.file.filename).name;
-  const db = readDB();
+app.post("/upload", upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: "No file" });
 
-  if (db.find(v => v.filename === req.file.originalname)) {
-    fs.unlinkSync(req.file.path);
+  // 3. ป้องกันชื่อไฟล์ว่าง
+  if (!req.file.originalname || !req.file.originalname.trim()) {
     return res.status(400).json({
-      success: false,
-      message: "Script name already exists."
+        success: false,
+        message: "Invalid filename"
     });
   }
 
-  db.push({
-    id,
-    filename: req.file.originalname,
-    owner: req.body.owner || "Unknown",
-    created: new Date().toISOString(),
-    downloads: 0,
-    size: req.file.size
-  });
-  saveDB(db);
-  res.json({
-    success: true,
-    id,
-    loader: `loadstring(game:HttpGet("${req.protocol}://${req.get("host")}/script/${id}"))()`
-  });
+  const { data: exists } = await supabase.from("scripts").select("id").eq("filename", req.file.originalname).maybeSingle();
+  if (exists) return res.status(400).json({ success: false, message: "Script name already exists." });
+
+  const id = await makeID();
+  const { error: uploadError } = await supabase.storage.from(BUCKET).upload(`${id}.lua`, req.file.buffer, { contentType: "text/plain" });
+  if (uploadError) return res.status(500).json({ success: false, message: uploadError.message });
+
+  const newData = { id, filename: req.file.originalname, owner: req.body.owner || "Unknown", created: new Date().toISOString(), downloads: 0, size: req.file.size };
+  const { error: dbError } = await supabase.from("scripts").insert(newData);
+  if (dbError) {
+    await supabase.storage.from(BUCKET).remove([`${id}.lua`]);
+    return res.status(500).json({ success: false, message: dbError.message });
+  }
+  res.json({ success: true, id, loader: `loadstring(game:HttpGet("${req.protocol}://${req.get("host")}/script/${id}"))()` });
 });
 
-// ป้องกันคนเปิดลิงค์ตรงๆ
-app.get("/script/:id", (req, res) => {
-  const db = readDB();
-  const data = db.find(v => v.id === req.params.id);
-  if (!data) {
-    return res.status(404).send("Script Not Found");
-  }
-
-  const file = path.join(SCRIPT_DIR, req.params.id + ".lua");
-  if (!fs.existsSync(file)) {
-    return res.status(404).send("File Not Found");
-  }
+app.get("/script/:id", async (req, res) => {
+  const { data } = await supabase.from("scripts").select("*").eq("id", req.params.id).maybeSingle();
+  if (!data) return res.status(404).send("Script Not Found");
 
   const userAgent = req.get("User-Agent") || "";
-
-  // ถ้าไม่ได้มาจาก Roblox ให้ขึ้นว่าโดนป้องกัน
-  if (!userAgent.includes("Roblox")) {
+  if (!/Roblox/i.test(userAgent)) {
     return res.status(403).send(`
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Protected by SEI HUB</title>
-<style>
-body{
-margin:0;
-background:#0f172a;
-font-family:Arial;
-display:flex;
-justify-content:center;
-align-items:center;
-height:100vh;
-color:white;
-}
-.box{
-background:#111827;
-padding:45px;
-border-radius:20px;
-text-align:center;
-box-shadow:0 0 30px #ff000055;
-width:450px;
-border:1px solid #ff000033;
-}
-h1{color:#ff3344;margin:0;font-size:28px;}
-p{color:#d1d5db;margin-top:15px;}
-.code{
-margin-top:20px;
-padding:12px;
-background:#1f2937;
-border-radius:8px;
-color:#ff7777;
-font-size:13px;
-word-break:break-all;
-}
-</style>
-</head>
-<body>
-<div class="box">
-<h1>🛡️ Protected by SEI HUB</h1>
-<p><b>สคริปต์นี้ถูกป้องกันโดย SEI HUB</b></p>
-<p>คุณไม่สามารถดูซอร์สโค้ดผ่าน Browser ได้</p>
-<p>กรุณาใช้ Loader ในเกมเท่านั้น</p>
-<div class="code">${req.protocol}://${req.get("host")}/script/${req.params.id}</div>
-</div>
-</body>
-</html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Protected by SEI HUB</title>
+<style>body{margin:0;background:#0f172a;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;color:white;}.box{background:#111827;padding:45px;border-radius:20px;text-align:center;box-shadow:0 0 30px #ff000055;width:450px;border:1px solid #ff000033;}h1{color:#ff3344;margin:0;font-size:28px;}p{color:#d1d5db;margin-top:15px;}.code{margin-top:20px;padding:12px;background:#1f2937;border-radius:8px;color:#ff7777;font-size:13px;word-break:break-all;}</style>
+</head><body><div class="box"><h1>🛡️ Protected by SEI HUB</h1><p><b>สคริปต์นี้ถูกป้องกันโดย SEI HUB</b></p><p>คุณไม่สามารถดูซอร์สโค้ดผ่าน Browser ได้</p><p>กรุณาใช้ Loader ในเกมเท่านั้น</p><div class="code">${req.protocol}://${req.get("host")}/script/${req.params.id}</div></div></body></html>
     `);
   }
 
-  data.downloads++;
-  saveDB(db);
-  res.type("text/plain");
-  res.send(fs.readFileSync(file, "utf8"));
+  const { data: fileBlob, error: dlError } = await supabase.storage.from(BUCKET).download(`${req.params.id}.lua`);
+  if (dlError) return res.status(404).send("File Not Found");
+  const text = await fileBlob.text();
+  await supabase.from("scripts").update({ downloads: data.downloads + 1 }).eq("id", req.params.id);
+  res.type("text/plain").send(text);
 });
 
-app.get("/scripts", (req, res) => {
-  const db = readDB();
-  res.json({ success: true, total: db.length, scripts: db });
+app.get("/scripts", async (req, res) => {
+  const { data } = await supabase.from("scripts").select("*").order("created", { ascending: false });
+  res.json({ success: true, total: data?.length || 0, scripts: data || [] });
 });
-
-app.get("/stats", (req, res) => {
-  const db = readDB();
-  res.json({
-    success: true,
-    scripts: db.length,
-    downloads: db.reduce((a, b) => a + b.downloads, 0)
-  });
+app.get("/stats", async (req, res) => {
+  const { data } = await supabase.from("scripts").select("downloads");
+  res.json({ success: true, scripts: data?.length || 0, downloads: (data || []).reduce((a,b)=>a+b.downloads,0) });
 });
-
-app.get("/search/:name", (req, res) => {
-  const db = readDB();
-  const result = db.filter(v =>
-    v.filename.toLowerCase().includes(req.params.name.toLowerCase())
-  );
-  res.json({ success: true, total: result.length, scripts: result });
+app.get("/search/:name", async (req, res) => {
+  const { data } = await supabase.from("scripts").select("*").ilike("filename", `%${req.params.name}%`);
+  res.json({ success: true, total: data?.length || 0, scripts: data || [] });
 });
-
-app.get("/list/:owner", (req, res) => {
-  const db = readDB();
-  const list = db.filter(v => v.owner == req.params.owner);
-  res.json({ success: true, total: list.length, scripts: list });
+app.get("/list/:owner", async (req, res) => {
+  const { data } = await supabase.from("scripts").select("*").eq("owner", req.params.owner);
+  res.json({ success: true, total: data?.length || 0, scripts: data || [] });
 });
-
-app.get("/info/:id", (req, res) => {
-  const db = readDB();
-  const data = db.find(v => v.id === req.params.id);
-  if (!data) {
-    return res.status(404).json({ success: false, message: "Not Found" });
-  }
+app.get("/info/:id", async (req, res) => {
+  const { data } = await supabase.from("scripts").select("*").eq("id", req.params.id).maybeSingle();
+  if (!data) return res.status(404).json({ success: false, message: "Not Found" });
   res.json({ success: true, data });
 });
-
-app.delete("/delete/:id", (req, res) => {
+app.delete("/delete/:id", async (req, res) => {
   const owner = req.query.owner;
-  if (!owner) {
-    return res.status(400).json({ success: false, message: "Owner required" });
-  }
-  const db = readDB();
-  const index = db.findIndex(v => v.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ success: false, message: "Script Not Found" });
-  }
-  if (db[index].owner!== owner) {
-    return res.status(403).json({ success: false, message: "Permission Denied" });
-  }
-  const file = path.join(SCRIPT_DIR, req.params.id + ".lua");
-  if (fs.existsSync(file)) fs.unlinkSync(file);
-  db.splice(index, 1);
-  saveDB(db);
+  if (!owner) return res.status(400).json({ success: false, message: "Owner required" });
+  const { data } = await supabase.from("scripts").select("*").eq("id", req.params.id).maybeSingle();
+  if (!data) return res.status(404).json({ success: false, message: "Script Not Found" });
+  if (data.owner !== owner) return res.status(403).json({ success: false, message: "Permission Denied" });
+  await supabase.storage.from(BUCKET).remove([`${req.params.id}.lua`]);
+  await supabase.from("scripts").delete().eq("id", req.params.id);
   res.json({ success: true, message: "Deleted" });
 });
-
-app.post("/update/:id", upload.single("file"), (req, res) => {
+app.post("/update/:id", upload.single("file"), async (req, res) => {
   const owner = req.body.owner;
-  const db = readDB();
-  const data = db.find(v => v.id === req.params.id);
+  const { data } = await supabase.from("scripts").select("*").eq("id", req.params.id).maybeSingle();
   if (!data) return res.status(404).json({ success: false });
-  if (data.owner!== owner) return res.status(403).json({ success: false });
+  if (data.owner !== owner) return res.status(403).json({ success: false });
   if (!req.file) return res.status(400).json({ success: false, message: "No file" });
-
-  data.filename = req.file.originalname;
-  data.size = req.file.size;
-  saveDB(db);
-  res.json({
-    success: true,
-    loader: `loadstring(game:HttpGet("${req.protocol}://${req.get("host")}/script/${req.params.id}"))()`
-  });
+  const { error } = await supabase.storage.from(BUCKET).upload(`${req.params.id}.lua`, req.file.buffer, { contentType: "text/plain", upsert: true });
+  if (error) return res.status(500).json({ success: false, message: error.message });
+  await supabase.from("scripts").update({ filename: req.file.originalname, size: req.file.size }).eq("id", req.params.id);
+  res.json({ success: true, loader: `loadstring(game:HttpGet("${req.protocol}://${req.get("host")}/script/${req.params.id}"))()` });
 });
+
+// เช็กการเชื่อมต่อ Supabase
+(async () => {
+    const { error } = await supabase.from("scripts").select("id").limit(1);
+    if (error) {
+        console.error("Supabase Error:", error.message);
+    } else {
+        console.log("Supabase Connected");
+    }
+})();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
