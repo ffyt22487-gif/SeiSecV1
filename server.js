@@ -51,7 +51,6 @@ const upload = multer({ storage });
 
 app.get("/", (req, res) => {
     const db = readDB();
-
     res.send(`
 <!DOCTYPE html>
 <html>
@@ -77,13 +76,8 @@ text-align:center;
 box-shadow:0 0 30px #00bfff55;
 width:420px;
 }
-h1{
-color:#00bfff;
-margin:0;
-}
-p{
-color:#d1d5db;
-}
+h1{color:#00bfff;margin:0;}
+p{color:#d1d5db;}
 .stat{
 margin-top:20px;
 padding:15px;
@@ -96,12 +90,10 @@ border-radius:10px;
 <div class="box">
 <h1>🛡 SEI HUB</h1>
 <p>สคริปต์นี้ถูกป้องกันโดย <b>SEI HUB</b></p>
-
 <div class="stat">
 📂 Scripts : ${db.length}<br>
 ⬇ Downloads : ${db.reduce((a,b)=>a+b.downloads,0)}
 </div>
-
 <p style="margin-top:20px;">Unauthorized access is prohibited.</p>
 </div>
 </body>
@@ -111,16 +103,11 @@ border-radius:10px;
 
 app.post("/upload", upload.single("file"), (req, res) => {
   if (!req.file) {
-    return res.status(400).json({
-      success: false,
-      message: "No file"
-    });
+    return res.status(400).json({ success: false, message: "No file" });
   }
-
   const id = path.parse(req.file.filename).name;
   const db = readDB();
 
-  // 1. กันชื่อไฟล์ซ้ำ
   if (db.find(v => v.filename === req.file.originalname)) {
     fs.unlinkSync(req.file.path);
     return res.status(400).json({
@@ -137,9 +124,7 @@ app.post("/upload", upload.single("file"), (req, res) => {
     downloads: 0,
     size: req.file.size
   });
-
   saveDB(db);
-
   res.json({
     success: true,
     id,
@@ -147,10 +132,10 @@ app.post("/upload", upload.single("file"), (req, res) => {
   });
 });
 
+// ป้องกันคนเปิดลิงค์ตรงๆ
 app.get("/script/:id", (req, res) => {
   const db = readDB();
   const data = db.find(v => v.id === req.params.id);
-
   if (!data) {
     return res.status(404).send("Script Not Found");
   }
@@ -160,20 +145,71 @@ app.get("/script/:id", (req, res) => {
     return res.status(404).send("File Not Found");
   }
 
+  const userAgent = req.get("User-Agent") || "";
+
+  // ถ้าไม่ได้มาจาก Roblox ให้ขึ้นว่าโดนป้องกัน
+  if (!userAgent.includes("Roblox")) {
+    return res.status(403).send(`
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Protected by SEI HUB</title>
+<style>
+body{
+margin:0;
+background:#0f172a;
+font-family:Arial;
+display:flex;
+justify-content:center;
+align-items:center;
+height:100vh;
+color:white;
+}
+.box{
+background:#111827;
+padding:45px;
+border-radius:20px;
+text-align:center;
+box-shadow:0 0 30px #ff000055;
+width:450px;
+border:1px solid #ff000033;
+}
+h1{color:#ff3344;margin:0;font-size:28px;}
+p{color:#d1d5db;margin-top:15px;}
+.code{
+margin-top:20px;
+padding:12px;
+background:#1f2937;
+border-radius:8px;
+color:#ff7777;
+font-size:13px;
+word-break:break-all;
+}
+</style>
+</head>
+<body>
+<div class="box">
+<h1>🛡️ Protected by SEI HUB</h1>
+<p><b>สคริปต์นี้ถูกป้องกันโดย SEI HUB</b></p>
+<p>คุณไม่สามารถดูซอร์สโค้ดผ่าน Browser ได้</p>
+<p>กรุณาใช้ Loader ในเกมเท่านั้น</p>
+<div class="code">${req.protocol}://${req.get("host")}/script/${req.params.id}</div>
+</div>
+</body>
+</html>
+    `);
+  }
+
   data.downloads++;
   saveDB(db);
-
   res.type("text/plain");
   res.send(fs.readFileSync(file, "utf8"));
 });
 
 app.get("/scripts", (req, res) => {
   const db = readDB();
-  res.json({
-    success: true,
-    total: db.length,
-    scripts: db
-  });
+  res.json({ success: true, total: db.length, scripts: db });
 });
 
 app.get("/stats", (req, res) => {
@@ -190,91 +226,55 @@ app.get("/search/:name", (req, res) => {
   const result = db.filter(v =>
     v.filename.toLowerCase().includes(req.params.name.toLowerCase())
   );
-  res.json({
-    success: true,
-    total: result.length,
-    scripts: result
-  });
+  res.json({ success: true, total: result.length, scripts: result });
 });
 
 app.get("/list/:owner", (req, res) => {
   const db = readDB();
   const list = db.filter(v => v.owner == req.params.owner);
-  res.json({
-    success: true,
-    total: list.length,
-    scripts: list
-  });
+  res.json({ success: true, total: list.length, scripts: list });
 });
 
 app.get("/info/:id", (req, res) => {
   const db = readDB();
   const data = db.find(v => v.id === req.params.id);
   if (!data) {
-    return res.status(404).json({
-      success: false,
-      message: "Not Found"
-    });
+    return res.status(404).json({ success: false, message: "Not Found" });
   }
-  res.json({
-    success: true,
-    data
-  });
+  res.json({ success: true, data });
 });
 
 app.delete("/delete/:id", (req, res) => {
   const owner = req.query.owner;
   if (!owner) {
-    return res.status(400).json({
-      success: false,
-      message: "Owner required"
-    });
+    return res.status(400).json({ success: false, message: "Owner required" });
   }
   const db = readDB();
   const index = db.findIndex(v => v.id === req.params.id);
   if (index === -1) {
-    return res.status(404).json({
-      success: false,
-      message: "Script Not Found"
-    });
+    return res.status(404).json({ success: false, message: "Script Not Found" });
   }
-  if (db[index].owner !== owner) {
-    return res.status(403).json({
-      success: false,
-      message: "Permission Denied"
-    });
+  if (db[index].owner!== owner) {
+    return res.status(403).json({ success: false, message: "Permission Denied" });
   }
   const file = path.join(SCRIPT_DIR, req.params.id + ".lua");
-  if (fs.existsSync(file)) {
-    fs.unlinkSync(file);
-  }
+  if (fs.existsSync(file)) fs.unlinkSync(file);
   db.splice(index, 1);
   saveDB(db);
-  res.json({
-    success: true,
-    message: "Deleted"
-  });
+  res.json({ success: true, message: "Deleted" });
 });
 
 app.post("/update/:id", upload.single("file"), (req, res) => {
   const owner = req.body.owner;
   const db = readDB();
   const data = db.find(v => v.id === req.params.id);
-
-  if (!data) {
-    return res.status(404).json({ success: false });
-  }
-  if (data.owner !== owner) {
-    return res.status(403).json({ success: false });
-  }
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: "No file" });
-  }
+  if (!data) return res.status(404).json({ success: false });
+  if (data.owner!== owner) return res.status(403).json({ success: false });
+  if (!req.file) return res.status(400).json({ success: false, message: "No file" });
 
   data.filename = req.file.originalname;
   data.size = req.file.size;
   saveDB(db);
-
   res.json({
     success: true,
     loader: `loadstring(game:HttpGet("${req.protocol}://${req.get("host")}/script/${req.params.id}"))()`
@@ -282,7 +282,6 @@ app.post("/update/:id", upload.single("file"), (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log("Server Running : " + PORT);
 });
