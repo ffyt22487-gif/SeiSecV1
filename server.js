@@ -15,7 +15,10 @@ const app = express();
 app.set("trust proxy", 1);
 
 app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: "1mb"
+}));
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -31,7 +34,22 @@ const BASE_URL = (
 const LOGO_URL =
   "https://cdn.discordapp.com/attachments/1448285099421335623/1537103402314502266/83_20260811161648.png?ex=6a7e7b59&is=6a7d29d9&hm=42ce3e94389bc1852b1d676f81a93c797a91963fa416369e11e0286abc78424f&";
 
-const DISCORD_URL = "https://discord.gg/n3xY3YuwuQ";
+const DISCORD_URL =
+  "https://discord.gg/n3xY3YuwuQ";
+
+/*
+  Token secret
+
+  ใส่ใน Render Environment Variables:
+
+  TOKEN_SECRET=ใส่ข้อความสุ่มยาวๆตรงนี้
+*/
+
+const TOKEN_SECRET =
+  process.env.TOKEN_SECRET ||
+  "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET";
+
+const TOKEN_EXPIRE_SECONDS = 30;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -40,41 +58,139 @@ const upload = multer({
   }
 });
 
+/* =========================================================
+   DECoy
+========================================================= */
+
+function decoyScript() {
+  return [
+    'print("67")',
+    'print("SeiSec")',
+    'print("https://discord.gg/n3xY3YuwuQ")'
+  ].join("\n");
+}
+
+/* =========================================================
+   TOKEN
+========================================================= */
+
+function createToken(id) {
+  const timestamp =
+    Math.floor(Date.now() / 1000);
+
+  const expires =
+    timestamp + TOKEN_EXPIRE_SECONDS;
+
+  const payload =
+    `${id}.${expires}`;
+
+  const signature =
+    crypto
+      .createHmac("sha256", TOKEN_SECRET)
+      .update(payload)
+      .digest("hex");
+
+  return `${expires}.${signature}`;
+}
+
+function verifyToken(id, token) {
+  try {
+    if (!token || typeof token !== "string") {
+      return false;
+    }
+
+    const parts = token.split(".");
+
+    if (parts.length !== 2) {
+      return false;
+    }
+
+    const expires =
+      Number(parts[0]);
+
+    const signature =
+      parts[1];
+
+    if (
+      !Number.isSafeInteger(expires) ||
+      !signature
+    ) {
+      return false;
+    }
+
+    const now =
+      Math.floor(Date.now() / 1000);
+
+    if (expires < now) {
+      return false;
+    }
+
+    const payload =
+      `${id}.${expires}`;
+
+    const expected =
+      crypto
+        .createHmac("sha256", TOKEN_SECRET)
+        .update(payload)
+        .digest("hex");
+
+    if (signature.length !== expected.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected)
+    );
+
+  } catch {
+    return false;
+  }
+}
+
+/* =========================================================
+   LOADER
+========================================================= */
+
 function loaderFor(id) {
-  return `loadstring(game:HttpGet("${BASE_URL}/script/${id}"))()`;
-}
-
-function fakeScript() {
   return `
-print("67")
-print("67")
-print("67")
-print("67")
-print("67")
+local HttpGet = game.HttpGet
+
+local tokenResponse = HttpGet(
+    game,
+    "${BASE_URL}/token/${id}"
+)
+
+local token = tokenResponse
+
+local source = HttpGet(
+    game,
+    "${BASE_URL}/script/${id}?token=" .. token
+)
+
+local fn = loadstring(source)
+
+if fn then
+    fn()
+end
 `;
 }
 
-function protectedScript(realScript) {
-  return `
-print("67")
-print("67")
-print("67")
-print("67")
-print("67")
-
-${realScript}
-`;
-}
+/* =========================================================
+   ID
+========================================================= */
 
 async function makeID() {
   while (true) {
-    const id = crypto.randomBytes(16).toString("hex");
+    const id =
+      crypto.randomBytes(16).toString("hex");
 
-    const { data, error } = await supabase
-      .from("scripts")
-      .select("id")
-      .eq("id", id)
-      .maybeSingle();
+    const { data, error } =
+      await supabase
+        .from("scripts")
+        .select("id")
+        .eq("id", id)
+        .maybeSingle();
 
     if (error) {
       throw error;
@@ -86,11 +202,26 @@ async function makeID() {
   }
 }
 
+/* =========================================================
+   DISCORD ICON
+========================================================= */
+
 const DISCORD_SVG = `
-<svg class="discord-icon" viewBox="0 0 127.14 96.36" xmlns="http://www.w3.org/2000/svg">
-<path fill="currentColor" d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.14ZM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69Zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69Z"/>
+<svg
+class="discord-icon"
+viewBox="0 0 127.14 96.36"
+xmlns="http://www.w3.org/2000/svg"
+>
+<path
+fill="currentColor"
+d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.14ZM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69Zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69Z"
+/>
 </svg>
 `;
+
+/* =========================================================
+   SHARED CSS
+========================================================= */
 
 const SHARED_CSS = `
 *{
@@ -106,7 +237,12 @@ scroll-behavior:smooth;
 body{
 min-height:100vh;
 background:
-radial-gradient(circle at 50% 5%,#123b8f 0%,#08152f 35%,#020817 82%);
+radial-gradient(
+circle at 50% 5%,
+#123b8f 0%,
+#08152f 35%,
+#020817 82%
+);
 font-family:Arial,sans-serif;
 color:white;
 overflow-x:hidden;
@@ -118,8 +254,16 @@ position:fixed;
 inset:0;
 pointer-events:none;
 background:
-radial-gradient(circle at 20% 20%,rgba(30,100,255,.08),transparent 35%),
-radial-gradient(circle at 80% 80%,rgba(0,160,255,.07),transparent 35%);
+radial-gradient(
+circle at 20% 20%,
+rgba(30,100,255,.08),
+transparent 35%
+),
+radial-gradient(
+circle at 80% 80%,
+rgba(0,160,255,.07),
+transparent 35%
+);
 }
 
 .page{
@@ -168,11 +312,6 @@ margin-bottom:25px;
 filter:
 drop-shadow(0 0 20px rgba(0,130,255,.5))
 drop-shadow(0 0 45px rgba(0,80,255,.25));
-transition:transform .3s ease;
-}
-
-.logo:hover{
-transform:scale(1.05);
 }
 
 .badge{
@@ -240,7 +379,12 @@ justify-content:center;
 gap:12px;
 padding:15px 22px;
 border-radius:15px;
-background:linear-gradient(135deg,#5865f2,#4752c4);
+background:
+linear-gradient(
+135deg,
+#5865f2,
+#4752c4
+);
 border:1px solid rgba(255,255,255,.18);
 color:#fff;
 font-size:15px;
@@ -265,8 +409,6 @@ box-shadow:
 
 .discord-btn:active{
 transform:scale(.97);
-box-shadow:
-0 5px 15px rgba(88,101,242,.3);
 }
 
 .discord-icon{
@@ -298,7 +440,8 @@ font-weight:400;
 height:1px;
 border:0;
 margin:30px 0 20px;
-background:linear-gradient(
+background:
+linear-gradient(
 90deg,
 transparent,
 rgba(70,130,255,.35),
@@ -319,10 +462,6 @@ color:#64748b;
 .footer a{
 color:#60a5fa;
 text-decoration:none;
-}
-
-.footer a:hover{
-text-decoration:underline;
 }
 
 .status{
@@ -379,6 +518,7 @@ box-shadow:0 0 5px #22c55e;
 }
 
 @media(max-width:500px){
+
 .page{
 padding:15px;
 }
@@ -404,40 +544,65 @@ font-size:16px;
 .discord-btn{
 max-width:100%;
 }
+
 }
 `;
 
+/* =========================================================
+   HOME
+========================================================= */
+
 app.get("/", async (req, res) => {
+
   try {
-    const { data, error } = await supabase
-      .from("scripts")
-      .select("*");
+
+    const { data, error } =
+      await supabase
+        .from("scripts")
+        .select("*");
 
     if (error) {
-      return res.status(500).send("Database Error");
+      return res
+        .status(500)
+        .send("Database Error");
     }
 
     const scripts = data || [];
 
-    const downloads = scripts.reduce(
-      (total, script) =>
-        total + Number(script.downloads || 0),
-      0
-    );
+    const downloads =
+      scripts.reduce(
+        (total, script) =>
+          total +
+          Number(script.downloads || 0),
+        0
+      );
 
     res.send(`
 <!DOCTYPE html>
+
 <html lang="th">
+
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<meta
+name="viewport"
+content="width=device-width,initial-scale=1"
+>
+
 <title>SEI HUB</title>
-<style>${SHARED_CSS}</style>
+
+<style>
+${SHARED_CSS}
+</style>
+
 </head>
 
 <body>
 
 <div class="page">
+
 <div class="box">
 
 <img
@@ -450,7 +615,9 @@ alt="SEI HUB"
 SECURE SCRIPT DISTRIBUTION
 </div>
 
-<h1>SEI HUB</h1>
+<h1>
+SEI HUB
+</h1>
 
 <div class="desc">
 Secure script distribution platform
@@ -459,13 +626,27 @@ Secure script distribution platform
 <div class="stats">
 
 <div class="stat">
-<div class="number">${scripts.length}</div>
-<div class="label">SCRIPTS</div>
+
+<div class="number">
+${scripts.length}
+</div>
+
+<div class="label">
+SCRIPTS
+</div>
+
 </div>
 
 <div class="stat">
-<div class="number">${downloads}</div>
-<div class="label">DOWNLOADS</div>
+
+<div class="number">
+${downloads}
+</div>
+
+<div class="label">
+DOWNLOADS
+</div>
+
 </div>
 
 </div>
@@ -480,6 +661,7 @@ rel="noopener noreferrer"
 ${DISCORD_SVG}
 
 <div class="discord-text">
+
 <div class="discord-title">
 Join Developer Discord
 </div>
@@ -487,6 +669,7 @@ Join Developer Discord
 <div class="discord-sub">
 discord.gg/n3xY3YuwuQ
 </div>
+
 </div>
 
 </a>
@@ -495,26 +678,35 @@ discord.gg/n3xY3YuwuQ
 
 <div class="footer">
 
-<strong>Developer Discord</strong><br>
+<strong>
+Developer Discord
+</strong>
+
+<br>
 
 <a
 href="${DISCORD_URL}"
 target="_blank"
 rel="noopener noreferrer"
 >
+
 ${DISCORD_URL}
+
 </a>
 
-<br><br>
+<br>
+<br>
 
 SEI HUB • Secure Script Distribution
 
 </div>
 
 </div>
+
 </div>
 
 </body>
+
 </html>
 `);
 
@@ -525,9 +717,74 @@ SEI HUB • Secure Script Distribution
       error.message
     );
 
-    res.status(500).send("Server Error");
+    res
+      .status(500)
+      .send("Server Error");
+
   }
+
 });
+
+/* =========================================================
+   TOKEN ENDPOINT
+========================================================= */
+
+app.get("/token/:id", async (req, res) => {
+
+  try {
+
+    const id = req.params.id;
+
+    if (!/^[a-f0-9]{32}$/i.test(id)) {
+      return res
+        .status(400)
+        .send("Invalid Script ID");
+    }
+
+    const { data, error } =
+      await supabase
+        .from("scripts")
+        .select("id")
+        .eq("id", id)
+        .maybeSingle();
+
+    if (error) {
+      return res
+        .status(500)
+        .send("Database Error");
+    }
+
+    if (!data) {
+      return res
+        .status(404)
+        .send("Script Not Found");
+    }
+
+    const token =
+      createToken(id);
+
+    res
+      .type("text/plain")
+      .send(token);
+
+  } catch (error) {
+
+    console.error(
+      "Token Error:",
+      error.message
+    );
+
+    res
+      .status(500)
+      .send("Server Error");
+
+  }
+
+});
+
+/* =========================================================
+   UPLOAD
+========================================================= */
 
 app.post(
   "/upload",
@@ -556,14 +813,15 @@ app.post(
       const {
         data: exists,
         error: existsError
-      } = await supabase
-        .from("scripts")
-        .select("id")
-        .eq(
-          "filename",
-          req.file.originalname
-        )
-        .maybeSingle();
+      } =
+        await supabase
+          .from("scripts")
+          .select("id")
+          .eq(
+            "filename",
+            req.file.originalname
+          )
+          .maybeSingle();
 
       if (existsError) {
         return res.status(500).json({
@@ -575,45 +833,56 @@ app.post(
       if (exists) {
         return res.status(400).json({
           success: false,
-          message: "Script name already exists."
+          message:
+            "Script name already exists."
         });
       }
 
-      const id = await makeID();
+      const id =
+        await makeID();
 
       const {
         error: uploadError
-      } = await supabase.storage
-        .from(BUCKET)
-        .upload(
-          `${id}.lua`,
-          req.file.buffer,
-          {
-            contentType: "text/plain"
-          }
-        );
+      } =
+        await supabase.storage
+          .from(BUCKET)
+          .upload(
+            `${id}.lua`,
+            req.file.buffer,
+            {
+              contentType:
+                "text/plain"
+            }
+          );
 
       if (uploadError) {
         return res.status(500).json({
           success: false,
-          message: uploadError.message
+          message:
+            uploadError.message
         });
       }
 
       const newData = {
         id,
-        filename: req.file.originalname,
-        owner: req.body.owner || "Unknown",
-        created: new Date().toISOString(),
+        filename:
+          req.file.originalname,
+        owner:
+          req.body.owner ||
+          "Unknown",
+        created:
+          new Date().toISOString(),
         downloads: 0,
-        size: req.file.size
+        size:
+          req.file.size
       };
 
       const {
         error: dbError
-      } = await supabase
-        .from("scripts")
-        .insert(newData);
+      } =
+        await supabase
+          .from("scripts")
+          .insert(newData);
 
       if (dbError) {
 
@@ -625,14 +894,17 @@ app.post(
 
         return res.status(500).json({
           success: false,
-          message: dbError.message
+          message:
+            dbError.message
         });
+
       }
 
       res.json({
         success: true,
         id,
-        loader: loaderFor(id)
+        loader:
+          loaderFor(id)
       });
 
     } catch (error) {
@@ -644,90 +916,118 @@ app.post(
 
       res.status(500).json({
         success: false,
-        message: "Upload failed"
+        message:
+          "Upload failed"
       });
+
     }
+
   }
 );
+
+/* =========================================================
+   SCRIPT
+========================================================= */
 
 app.get("/script/:id", async (req, res) => {
 
   try {
 
-    const id = req.params.id;
+    const id =
+      req.params.id;
 
-    if (!/^[a-f0-9]{32}$/i.test(id)) {
+    if (
+      !/^[a-f0-9]{32}$/i.test(id)
+    ) {
       return res
         .status(400)
-        .type("text/plain")
-        .send(fakeScript());
+        .send("Invalid Script ID");
     }
 
-    const {
-      data,
-      error
-    } = await supabase
-      .from("scripts")
-      .select("*")
-      .eq("id", id)
-      .maybeSingle();
+    const { data, error } =
+      await supabase
+        .from("scripts")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
 
     if (error) {
       return res
         .status(500)
-        .type("text/plain")
-        .send(fakeScript());
+        .send("Database Error");
     }
 
     if (!data) {
       return res
         .status(404)
-        .type("text/plain")
-        .send(fakeScript());
+        .send("Script Not Found");
     }
 
-    const userAgent =
-      req.get("User-Agent") || "";
+    /*
+      ไม่มี token
+      หรือ token ผิด
+      = ส่ง Decoy
+    */
 
-    if (!/Roblox/i.test(userAgent)) {
+    const token =
+      req.query.token;
+
+    if (
+      !verifyToken(
+        id,
+        token
+      )
+    ) {
 
       return res
-        .status(403)
+        .status(200)
         .type("text/plain")
-        .send(fakeScript());
+        .send(
+          decoyScript()
+        );
+
     }
+
+    /*
+      Token ถูกต้อง
+      ถึงจะอ่าน source จริง
+    */
 
     const {
       data: fileBlob,
       error: dlError
-    } = await supabase.storage
-      .from(BUCKET)
-      .download(`${id}.lua`);
+    } =
+      await supabase.storage
+        .from(BUCKET)
+        .download(
+          `${id}.lua`
+        );
 
     if (dlError) {
-
       return res
         .status(404)
-        .type("text/plain")
-        .send(fakeScript());
+        .send("File Not Found");
     }
 
-    const text = await fileBlob.text();
+    const text =
+      await fileBlob.text();
 
     await supabase
       .from("scripts")
       .update({
         downloads:
-          Number(data.downloads || 0) + 1
+          Number(
+            data.downloads || 0
+          ) + 1
       })
-      .eq("id", id);
-
-    const finalScript =
-      protectedScript(text);
+      .eq(
+        "id",
+        id
+      );
 
     res
       .type("text/plain")
-      .send(finalScript);
+      .send(text);
 
   } catch (error) {
 
@@ -738,67 +1038,77 @@ app.get("/script/:id", async (req, res) => {
 
     res
       .status(500)
-      .type("text/plain")
-      .send(fakeScript());
+      .send("Server Error");
+
   }
+
 });
+
+/* =========================================================
+   SCRIPTS
+========================================================= */
 
 app.get("/scripts", async (req, res) => {
 
   try {
 
-    const {
-      data,
-      error
-    } = await supabase
-      .from("scripts")
-      .select("*")
-      .order(
-        "created",
-        {
-          ascending: false
-        }
-      );
+    const { data, error } =
+      await supabase
+        .from("scripts")
+        .select("*")
+        .order(
+          "created",
+          {
+            ascending: false
+          }
+        );
 
     if (error) {
-
       return res.status(500).json({
         success: false,
-        message: error.message
+        message:
+          error.message
       });
     }
 
     res.json({
       success: true,
-      total: data?.length || 0,
-      scripts: data || []
+      total:
+        data?.length || 0,
+      scripts:
+        data || []
     });
 
   } catch (error) {
 
     res.status(500).json({
       success: false,
-      message: "Failed to load scripts"
+      message:
+        "Failed to load scripts"
     });
+
   }
+
 });
+
+/* =========================================================
+   STATS
+========================================================= */
 
 app.get("/stats", async (req, res) => {
 
   try {
 
-    const {
-      data,
-      error
-    } = await supabase
-      .from("scripts")
-      .select("downloads");
+    const { data, error } =
+      await supabase
+        .from("scripts")
+        .select("downloads");
 
     if (error) {
-
       return res.status(500).json({
         success: false,
-        message: error.message
+        message:
+          error.message
       });
     }
 
@@ -806,13 +1116,16 @@ app.get("/stats", async (req, res) => {
       (data || []).reduce(
         (total, script) =>
           total +
-          Number(script.downloads || 0),
+          Number(
+            script.downloads || 0
+          ),
         0
       );
 
     res.json({
       success: true,
-      scripts: data?.length || 0,
+      scripts:
+        data?.length || 0,
       downloads
     });
 
@@ -820,239 +1133,289 @@ app.get("/stats", async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Failed to load stats"
+      message:
+        "Failed to load stats"
     });
+
   }
+
 });
 
-app.get("/search/:name", async (req, res) => {
+/* =========================================================
+   SEARCH
+========================================================= */
 
-  try {
+app.get(
+  "/search/:name",
+  async (req, res) => {
 
-    const {
-      data,
-      error
-    } = await supabase
-      .from("scripts")
-      .select("*")
-      .ilike(
-        "filename",
-        `%${req.params.name}%`
-      );
+    try {
 
-    if (error) {
+      const { data, error } =
+        await supabase
+          .from("scripts")
+          .select("*")
+          .ilike(
+            "filename",
+            `%${req.params.name}%`
+          );
 
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
-    }
-
-    res.json({
-      success: true,
-      total: data?.length || 0,
-      scripts: data || []
-    });
-
-  } catch (error) {
-
-    res.status(500).json({
-      success: false,
-      message: "Search failed"
-    });
-  }
-});
-
-app.get("/list/:owner", async (req, res) => {
-
-  try {
-
-    const {
-      data,
-      error
-    } = await supabase
-      .from("scripts")
-      .select("*")
-      .eq(
-        "owner",
-        req.params.owner
-      )
-      .order(
-        "created",
-        {
-          ascending: false
-        }
-      );
-
-    if (error) {
-
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
-    }
-
-    res.json({
-      success: true,
-      total: data?.length || 0,
-      scripts: data || []
-    });
-
-  } catch (error) {
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to load scripts"
-    });
-  }
-});
-
-app.get("/info/:id", async (req, res) => {
-
-  try {
-
-    const {
-      data,
-      error
-    } = await supabase
-      .from("scripts")
-      .select("*")
-      .eq(
-        "id",
-        req.params.id
-      )
-      .maybeSingle();
-
-    if (error) {
-
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
-    }
-
-    if (!data) {
-
-      return res.status(404).json({
-        success: false,
-        message: "Not Found"
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        ...data,
-        loader: loaderFor(data.id)
+      if (error) {
+        return res.status(500).json({
+          success: false,
+          message:
+            error.message
+        });
       }
-    });
 
-  } catch (error) {
+      res.json({
+        success: true,
+        total:
+          data?.length || 0,
+        scripts:
+          data || []
+      });
 
-    res.status(500).json({
-      success: false,
-      message: "Failed to load script info"
-    });
+    } catch (error) {
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Search failed"
+      });
+
+    }
+
   }
-});
+);
 
-app.delete("/delete/:id", async (req, res) => {
+/* =========================================================
+   LIST OWNER
+========================================================= */
 
-  try {
+app.get(
+  "/list/:owner",
+  async (req, res) => {
 
-    const owner = req.query.owner;
+    try {
 
-    if (!owner) {
+      const { data, error } =
+        await supabase
+          .from("scripts")
+          .select("*")
+          .eq(
+            "owner",
+            req.params.owner
+          )
+          .order(
+            "created",
+            {
+              ascending: false
+            }
+          );
 
-      return res.status(400).json({
-        success: false,
-        message: "Owner required"
+      if (error) {
+        return res.status(500).json({
+          success: false,
+          message:
+            error.message
+        });
+      }
+
+      res.json({
+        success: true,
+        total:
+          data?.length || 0,
+        scripts:
+          data || []
       });
+
+    } catch (error) {
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to load scripts"
+      });
+
     }
 
-    const {
-      data,
-      error
-    } = await supabase
-      .from("scripts")
-      .select("*")
-      .eq(
-        "id",
-        req.params.id
-      )
-      .maybeSingle();
-
-    if (error) {
-
-      return res.status(500).json({
-        success: false,
-        message: error.message
-      });
-    }
-
-    if (!data) {
-
-      return res.status(404).json({
-        success: false,
-        message: "Script Not Found"
-      });
-    }
-
-    if (data.owner !== owner) {
-
-      return res.status(403).json({
-        success: false,
-        message: "Permission Denied"
-      });
-    }
-
-    const {
-      error: storageError
-    } = await supabase.storage
-      .from(BUCKET)
-      .remove([
-        `${req.params.id}.lua`
-      ]);
-
-    if (storageError) {
-
-      return res.status(500).json({
-        success: false,
-        message: storageError.message
-      });
-    }
-
-    const {
-      error: deleteError
-    } = await supabase
-      .from("scripts")
-      .delete()
-      .eq(
-        "id",
-        req.params.id
-      );
-
-    if (deleteError) {
-
-      return res.status(500).json({
-        success: false,
-        message: deleteError.message
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "Deleted"
-    });
-
-  } catch (error) {
-
-    res.status(500).json({
-      success: false,
-      message: "Delete failed"
-    });
   }
-});
+);
+
+/* =========================================================
+   INFO
+========================================================= */
+
+app.get(
+  "/info/:id",
+  async (req, res) => {
+
+    try {
+
+      const { data, error } =
+        await supabase
+          .from("scripts")
+          .select("*")
+          .eq(
+            "id",
+            req.params.id
+          )
+          .maybeSingle();
+
+      if (error) {
+        return res.status(500).json({
+          success: false,
+          message:
+            error.message
+        });
+      }
+
+      if (!data) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Not Found"
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          ...data,
+          loader:
+            loaderFor(data.id)
+        }
+      });
+
+    } catch (error) {
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to load script info"
+      });
+
+    }
+
+  }
+);
+
+/* =========================================================
+   DELETE
+========================================================= */
+
+app.delete(
+  "/delete/:id",
+  async (req, res) => {
+
+    try {
+
+      const owner =
+        req.query.owner;
+
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Owner required"
+        });
+      }
+
+      const { data, error } =
+        await supabase
+          .from("scripts")
+          .select("*")
+          .eq(
+            "id",
+            req.params.id
+          )
+          .maybeSingle();
+
+      if (error) {
+        return res.status(500).json({
+          success: false,
+          message:
+            error.message
+        });
+      }
+
+      if (!data) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Script Not Found"
+        });
+      }
+
+      if (
+        data.owner !== owner
+      ) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Permission Denied"
+        });
+      }
+
+      const {
+        error: storageError
+      } =
+        await supabase.storage
+          .from(BUCKET)
+          .remove([
+            `${req.params.id}.lua`
+          ]);
+
+      if (storageError) {
+        return res.status(500).json({
+          success: false,
+          message:
+            storageError.message
+        });
+      }
+
+      const {
+        error: deleteError
+      } =
+        await supabase
+          .from("scripts")
+          .delete()
+          .eq(
+            "id",
+            req.params.id
+          );
+
+      if (deleteError) {
+        return res.status(500).json({
+          success: false,
+          message:
+            deleteError.message
+        });
+      }
+
+      res.json({
+        success: true,
+        message:
+          "Deleted"
+      });
+
+    } catch (error) {
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Delete failed"
+      });
+
+    }
+
+  }
+);
+
+/* =========================================================
+   UPDATE
+========================================================= */
 
 app.post(
   "/update/:id",
@@ -1061,100 +1424,109 @@ app.post(
 
     try {
 
-      const owner = req.body.owner;
+      const owner =
+        req.body.owner;
 
       const {
         data,
         error: findError
-      } = await supabase
-        .from("scripts")
-        .select("*")
-        .eq(
-          "id",
-          req.params.id
-        )
-        .maybeSingle();
+      } =
+        await supabase
+          .from("scripts")
+          .select("*")
+          .eq(
+            "id",
+            req.params.id
+          )
+          .maybeSingle();
 
       if (findError) {
-
         return res.status(500).json({
           success: false,
-          message: findError.message
+          message:
+            findError.message
         });
       }
 
       if (!data) {
-
         return res.status(404).json({
           success: false,
-          message: "Script Not Found"
+          message:
+            "Script Not Found"
         });
       }
 
-      if (data.owner !== owner) {
-
+      if (
+        data.owner !== owner
+      ) {
         return res.status(403).json({
           success: false,
-          message: "Permission Denied"
+          message:
+            "Permission Denied"
         });
       }
 
       if (!req.file) {
-
         return res.status(400).json({
           success: false,
-          message: "No file"
+          message:
+            "No file"
         });
       }
 
       const {
         error: uploadError
-      } = await supabase.storage
-        .from(BUCKET)
-        .upload(
-          `${req.params.id}.lua`,
-          req.file.buffer,
-          {
-            contentType: "text/plain",
-            upsert: true
-          }
-        );
+      } =
+        await supabase.storage
+          .from(BUCKET)
+          .upload(
+            `${req.params.id}.lua`,
+            req.file.buffer,
+            {
+              contentType:
+                "text/plain",
+              upsert: true
+            }
+          );
 
       if (uploadError) {
-
         return res.status(500).json({
           success: false,
-          message: uploadError.message
+          message:
+            uploadError.message
         });
       }
 
       const {
         error: updateError
-      } = await supabase
-        .from("scripts")
-        .update({
-          filename:
-            req.file.originalname,
-          size:
-            req.file.size
-        })
-        .eq(
-          "id",
-          req.params.id
-        );
+      } =
+        await supabase
+          .from("scripts")
+          .update({
+            filename:
+              req.file.originalname,
+            size:
+              req.file.size
+          })
+          .eq(
+            "id",
+            req.params.id
+          );
 
       if (updateError) {
-
         return res.status(500).json({
           success: false,
-          message: updateError.message
+          message:
+            updateError.message
         });
       }
 
       res.json({
         success: true,
         loader:
-          loaderFor(req.params.id)
+          loaderFor(
+            req.params.id
+          )
       });
 
     } catch (error) {
@@ -1166,22 +1538,28 @@ app.post(
 
       res.status(500).json({
         success: false,
-        message: "Update failed"
+        message:
+          "Update failed"
       });
+
     }
+
   }
 );
+
+/* =========================================================
+   SUPABASE TEST
+========================================================= */
 
 (async () => {
 
   try {
 
-    const {
-      error
-    } = await supabase
-      .from("scripts")
-      .select("id")
-      .limit(1);
+    const { error } =
+      await supabase
+        .from("scripts")
+        .select("id")
+        .limit(1);
 
     if (error) {
 
@@ -1195,6 +1573,7 @@ app.post(
       console.log(
         "Supabase Connected"
       );
+
     }
 
   } catch (error) {
@@ -1203,9 +1582,14 @@ app.post(
       "Supabase Error:",
       error.message
     );
+
   }
 
 })();
+
+/* =========================================================
+   SERVER
+========================================================= */
 
 const PORT =
   process.env.PORT || 3000;
@@ -1213,8 +1597,11 @@ const PORT =
 app.listen(
   PORT,
   () => {
+
     console.log(
-      "Server Running : " + PORT
+      "Server Running : " +
+      PORT
     );
+
   }
 );
