@@ -12,6 +12,8 @@ const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 
+app.set("trust proxy", 1);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -22,29 +24,22 @@ const supabase = createClient(
 
 const BUCKET = process.env.SUPABASE_BUCKET || "scripts";
 
+const BASE_URL = (
+  process.env.BASE_URL || "https://ui-f.onrender.com"
+).replace(/\/+$/, "");
+
+const LOGO_URL =
+  "https://cdn.discordapp.com/attachments/1448285099421335623/1537103402314502266/83_20260811161648.png?ex=6a7e7b59&is=6a7d29d9&hm=42ce3e94389bc1852b1d676f81a93c797a91963fa416369e11e0286abc78424f&";
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 8 * 1024 * 1024
+    fileSize: 5 * 1024 * 1024
   }
 });
 
-function getBaseUrl(req) {
-  const forwardedProto = req.get("x-forwarded-proto");
-
-  if (forwardedProto) {
-    return `${forwardedProto.split(",")[0].trim()}://${req.get("host")}`;
-  }
-
-  return `${req.protocol}://${req.get("host")}`;
-}
-
-function getHttpsBaseUrl(req) {
-  return `https://${req.get("host")}`;
-}
-
-function makeLoader(req, id) {
-  return `loadstring(game:HttpGet("${getHttpsBaseUrl(req)}/script/${id}"))()`;
+function loaderFor(id) {
+  return `loadstring(game:HttpGet("${BASE_URL}/script/${id}"))()`;
 }
 
 async function makeID() {
@@ -67,167 +62,137 @@ async function makeID() {
   }
 }
 
-/* =========================================================
-   HOME
-========================================================= */
-
 app.get("/", async (req, res) => {
   try {
-    const { data: db, error } = await supabase
+    const { data, error } = await supabase
       .from("scripts")
       .select("*");
 
     if (error) {
-      console.error("Home Supabase Error:", error.message);
+      return res.status(500).send("Database Error");
     }
 
-    const scripts = db || [];
+    const scripts = data || [];
 
-    const totalDownloads = scripts.reduce(
+    const downloads = scripts.reduce(
       (total, script) => total + Number(script.downloads || 0),
       0
     );
 
     res.send(`
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SEI HUB</title>
-
 <style>
-*{
-  box-sizing:border-box;
-}
-
+*{box-sizing:border-box}
 body{
-  margin:0;
-  min-height:100vh;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:
-    radial-gradient(circle at top, #172554 0%, #0f172a 45%, #020617 100%);
-  font-family:Arial,Helvetica,sans-serif;
-  color:white;
+margin:0;
+min-height:100vh;
+background:
+radial-gradient(circle at 50% 10%,#123b8f 0%,#08152f 35%,#020817 80%);
+font-family:Arial,sans-serif;
+display:flex;
+align-items:center;
+justify-content:center;
+color:white;
+padding:25px;
 }
-
 .box{
-  width:min(90%,460px);
-  padding:42px 30px;
-  border-radius:24px;
-  text-align:center;
-  background:rgba(15,23,42,.92);
-  border:1px solid rgba(59,130,246,.25);
-  box-shadow:
-    0 20px 70px rgba(0,0,0,.45),
-    0 0 40px rgba(0,191,255,.08);
+width:100%;
+max-width:520px;
+background:rgba(10,22,45,.9);
+border:1px solid rgba(70,130,255,.3);
+border-radius:28px;
+padding:45px 35px;
+text-align:center;
+box-shadow:
+0 0 70px rgba(0,110,255,.14),
+inset 0 0 40px rgba(40,100,255,.04);
 }
-
 .logo{
-  width:72px;
-  height:72px;
-  margin:0 auto 18px;
-  border-radius:20px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:#020617;
-  border:1px solid rgba(59,130,246,.4);
-  font-size:36px;
+width:135px;
+height:135px;
+object-fit:contain;
+margin-bottom:25px;
+filter:drop-shadow(0 0 25px rgba(0,130,255,.45));
 }
-
+.badge{
+display:inline-block;
+padding:10px 22px;
+border-radius:30px;
+background:rgba(30,100,255,.15);
+border:1px solid rgba(80,150,255,.25);
+color:#63a9ff;
+font-size:14px;
+font-weight:bold;
+letter-spacing:1px;
+}
 h1{
-  margin:0;
-  font-size:30px;
-  letter-spacing:.5px;
+margin:20px 0 10px;
+font-size:40px;
 }
-
-.subtitle{
-  color:#94a3b8;
-  margin-top:10px;
+p{
+color:#94a3b8;
+font-size:17px;
 }
-
 .stats{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:12px;
-  margin-top:28px;
+margin-top:28px;
+display:flex;
+gap:12px;
 }
-
 .stat{
-  padding:18px;
-  border-radius:16px;
-  background:#111827;
-  border:1px solid rgba(255,255,255,.06);
+flex:1;
+padding:18px;
+border-radius:16px;
+background:rgba(2,10,25,.65);
+border:1px solid rgba(255,255,255,.06);
 }
-
-.stat-number{
-  font-size:25px;
-  font-weight:bold;
-  color:#38bdf8;
+.number{
+font-size:25px;
+font-weight:bold;
+color:#60a5fa;
 }
-
-.stat-label{
-  margin-top:5px;
-  color:#94a3b8;
-  font-size:13px;
+.label{
+margin-top:6px;
+font-size:13px;
+color:#64748b;
 }
-
 .footer{
-  margin-top:28px;
-  color:#64748b;
-  font-size:12px;
+margin-top:30px;
+font-size:13px;
+color:#475569;
 }
 </style>
 </head>
-
 <body>
-
 <div class="box">
-
-  <div class="logo">🛡️</div>
-
-  <h1>SEI HUB</h1>
-
-  <div class="subtitle">
-    Secure Script Distribution Platform
-  </div>
-
-  <div class="stats">
-
-    <div class="stat">
-      <div class="stat-number">${scripts.length}</div>
-      <div class="stat-label">Scripts</div>
-    </div>
-
-    <div class="stat">
-      <div class="stat-number">${totalDownloads}</div>
-      <div class="stat-label">Downloads</div>
-    </div>
-
-  </div>
-
-  <div class="footer">
-    Protected by SEI HUB
-  </div>
-
+<img class="logo" src="${LOGO_URL}" alt="SEI HUB">
+<div class="badge">SECURE SCRIPT DISTRIBUTION</div>
+<h1>SEI HUB</h1>
+<p>Secure script distribution platform</p>
+<div class="stats">
+<div class="stat">
+<div class="number">${scripts.length}</div>
+<div class="label">SCRIPTS</div>
 </div>
-
+<div class="stat">
+<div class="number">${downloads}</div>
+<div class="label">DOWNLOADS</div>
+</div>
+</div>
+<div class="footer">SEI HUB • Secure Script Distribution</div>
+</div>
 </body>
 </html>
 `);
   } catch (error) {
-    console.error("Home Error:", error);
-
-    res.status(500).send("Internal Server Error");
+    console.error("Home Error:", error.message);
+    res.status(500).send("Server Error");
   }
 });
-
-/* =========================================================
-   UPLOAD
-========================================================= */
 
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
@@ -238,10 +203,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       });
     }
 
-    if (
-      !req.file.originalname ||
-      !req.file.originalname.trim()
-    ) {
+    if (!req.file.originalname || !req.file.originalname.trim()) {
       return res.status(400).json({
         success: false,
         message: "Invalid filename"
@@ -276,8 +238,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         `${id}.lua`,
         req.file.buffer,
         {
-          contentType: "text/plain",
-          upsert: false
+          contentType: "text/plain"
         }
       );
 
@@ -315,22 +276,17 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     res.json({
       success: true,
       id,
-      loader: makeLoader(req, id)
+      loader: loaderFor(id)
     });
-
   } catch (error) {
-    console.error("Upload Error:", error);
+    console.error("Upload Error:", error.message);
 
     res.status(500).json({
       success: false,
-      message: error.message || "Upload failed"
+      message: "Upload failed"
     });
   }
 });
-
-/* =========================================================
-   SCRIPT
-========================================================= */
 
 app.get("/script/:id", async (req, res) => {
   try {
@@ -343,8 +299,6 @@ app.get("/script/:id", async (req, res) => {
       .maybeSingle();
 
     if (error) {
-      console.error("Script DB Error:", error.message);
-
       return res.status(500).send("Database Error");
     }
 
@@ -354,289 +308,137 @@ app.get("/script/:id", async (req, res) => {
 
     const userAgent = req.get("User-Agent") || "";
 
-    /*
-      Browser protection
-    */
-
     if (!/Roblox/i.test(userAgent)) {
-
       return res.status(403).send(`
 <!DOCTYPE html>
-<html lang="en">
-
+<html>
 <head>
-
 <meta charset="UTF-8">
-
-<meta
-  name="viewport"
-  content="width=device-width,initial-scale=1.0"
->
-
-<title>Protected Script | SEI HUB</title>
-
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Protected Script</title>
 <style>
-
-*{
-  box-sizing:border-box;
-}
-
+*{box-sizing:border-box}
 body{
-  margin:0;
-  min-height:100vh;
-
-  display:flex;
-  align-items:center;
-  justify-content:center;
-
-  padding:24px;
-
-  background:
-    radial-gradient(
-      circle at top,
-      #172554 0%,
-      #0f172a 45%,
-      #020617 100%
-    );
-
-  color:white;
-
-  font-family:
-    Inter,
-    Arial,
-    Helvetica,
-    sans-serif;
+margin:0;
+min-height:100vh;
+background:
+radial-gradient(circle at 50% 10%,#123b8f 0%,#08152f 35%,#020817 80%);
+font-family:Arial,sans-serif;
+color:white;
+display:flex;
+align-items:center;
+justify-content:center;
+padding:25px;
 }
-
-.card{
-  width:min(100%,470px);
-
-  padding:36px 28px;
-
-  text-align:center;
-
-  background:
-    rgba(15,23,42,.94);
-
-  border:
-    1px solid rgba(96,165,250,.18);
-
-  border-radius:24px;
-
-  box-shadow:
-    0 25px 80px rgba(0,0,0,.55),
-    0 0 50px rgba(37,99,235,.08);
-
-  backdrop-filter:blur(12px);
+.box{
+width:100%;
+max-width:520px;
+padding:45px 35px;
+text-align:center;
+border-radius:28px;
+background:rgba(10,22,45,.9);
+border:1px solid rgba(70,130,255,.35);
+box-shadow:
+0 0 70px rgba(0,110,255,.16),
+inset 0 0 40px rgba(30,100,255,.04);
 }
-
-.icon{
-  width:76px;
-  height:76px;
-
-  margin:0 auto 20px;
-
-  display:flex;
-  align-items:center;
-  justify-content:center;
-
-  border-radius:22px;
-
-  background:
-    linear-gradient(
-      145deg,
-      #172554,
-      #0f172a
-    );
-
-  border:
-    1px solid rgba(96,165,250,.25);
-
-  font-size:36px;
-
-  box-shadow:
-    0 10px 30px rgba(0,0,0,.35);
+.logo{
+width:150px;
+height:150px;
+object-fit:contain;
+margin-bottom:25px;
+filter:drop-shadow(0 0 25px rgba(0,130,255,.5));
 }
-
 .badge{
-  display:inline-block;
-
-  padding:6px 12px;
-
-  margin-bottom:14px;
-
-  border-radius:999px;
-
-  background:rgba(59,130,246,.12);
-
-  color:#60a5fa;
-
-  font-size:12px;
-
-  font-weight:700;
-
-  letter-spacing:.6px;
+display:inline-block;
+padding:10px 22px;
+border-radius:30px;
+background:rgba(30,100,255,.15);
+border:1px solid rgba(80,150,255,.25);
+color:#63a9ff;
+font-weight:bold;
+letter-spacing:1px;
+font-size:14px;
 }
-
 h1{
-  margin:0;
-
-  font-size:27px;
+margin:22px 0 12px;
+font-size:38px;
 }
-
-.description{
-  margin:13px 0 0;
-
-  color:#94a3b8;
-
-  line-height:1.7;
-
-  font-size:14px;
+.desc{
+color:#94a3b8;
+font-size:17px;
+line-height:1.7;
 }
-
-.info{
-  margin-top:25px;
-
-  padding:16px;
-
-  border-radius:15px;
-
-  background:#0b1220;
-
-  border:
-    1px solid rgba(255,255,255,.06);
-}
-
-.info-title{
-  font-size:12px;
-
-  color:#64748b;
-
-  margin-bottom:7px;
-}
-
-.info-text{
-  color:#cbd5e1;
-
-  font-size:13px;
-
-  line-height:1.5;
-}
-
 .status{
-  margin-top:18px;
-
-  display:flex;
-
-  align-items:center;
-
-  justify-content:center;
-
-  gap:8px;
-
-  color:#94a3b8;
-
-  font-size:12px;
+margin-top:30px;
+padding:18px;
+border-radius:16px;
+background:rgba(2,10,25,.65);
+border:1px solid rgba(255,255,255,.06);
 }
-
+.status-title{
+color:#64748b;
+font-size:13px;
+letter-spacing:1px;
+margin-bottom:8px;
+}
+.status-text{
+color:#cbd5e1;
+font-size:15px;
+}
+.active{
+margin-top:25px;
+color:#4ade80;
+font-size:14px;
+}
 .dot{
-  width:7px;
-  height:7px;
-
-  border-radius:50%;
-
-  background:#22c55e;
-
-  box-shadow:
-    0 0 10px #22c55e;
+display:inline-block;
+width:9px;
+height:9px;
+background:#22c55e;
+border-radius:50%;
+margin-right:8px;
+box-shadow:0 0 12px #22c55e;
 }
-
 .footer{
-  margin-top:25px;
-
-  color:#475569;
-
-  font-size:11px;
-
-  letter-spacing:.3px;
+margin-top:35px;
+color:#475569;
+font-size:13px;
 }
-
 </style>
-
 </head>
-
 <body>
-
-<div class="card">
-
-  <div class="icon">
-    🛡️
-  </div>
-
-  <div class="badge">
-    PROTECTED SCRIPT
-  </div>
-
-  <h1>
-    SEI HUB
-  </h1>
-
-  <p class="description">
-    This script is protected by SEI HUB
-    and cannot be viewed directly in a web browser.
-  </p>
-
-  <div class="info">
-
-    <div class="info-title">
-      ACCESS RESTRICTED
-    </div>
-
-    <div class="info-text">
-      Source code access is restricted.
-      Please use the provided Loader inside Roblox.
-    </div>
-
-  </div>
-
-  <div class="status">
-
-    <span class="dot"></span>
-
-    Script protection is active
-
-  </div>
-
-  <div class="footer">
-    SEI HUB • Secure Script Distribution
-  </div>
-
+<div class="box">
+<img class="logo" src="${LOGO_URL}" alt="SEI HUB">
+<div class="badge">PROTECTED SCRIPT</div>
+<h1>SEI HUB</h1>
+<div class="desc">
+Secure script distribution system
 </div>
-
+<div class="status">
+<div class="status-title">ACCESS PROTECTED</div>
+<div class="status-text">
+This resource is protected by SEI HUB.
+</div>
+</div>
+<div class="active">
+<span class="dot"></span>
+Protection Active
+</div>
+<div class="footer">
+SEI HUB • Secure Script Distribution
+</div>
+</div>
 </body>
-
 </html>
 `);
-
     }
 
-    /*
-      Roblox request
-    */
-
-    const {
-      data: fileBlob,
-      error: downloadError
-    } = await supabase.storage
+    const { data: fileBlob, error: dlError } = await supabase.storage
       .from(BUCKET)
       .download(`${id}.lua`);
 
-    if (downloadError) {
-      console.error(
-        "Storage Download Error:",
-        downloadError.message
-      );
-
+    if (dlError) {
       return res.status(404).send("File Not Found");
     }
 
@@ -649,20 +451,12 @@ h1{
       })
       .eq("id", id);
 
-    res
-      .type("text/plain")
-      .send(text);
-
+    res.type("text/plain").send(text);
   } catch (error) {
-    console.error("Script Error:", error);
-
-    res.status(500).send("Internal Server Error");
+    console.error("Script Error:", error.message);
+    res.status(500).send("Server Error");
   }
 });
-
-/* =========================================================
-   ALL SCRIPTS
-========================================================= */
 
 app.get("/scripts", async (req, res) => {
   try {
@@ -685,18 +479,13 @@ app.get("/scripts", async (req, res) => {
       total: data?.length || 0,
       scripts: data || []
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: "Failed to load scripts"
     });
   }
 });
-
-/* =========================================================
-   STATS
-========================================================= */
 
 app.get("/stats", async (req, res) => {
   try {
@@ -712,8 +501,7 @@ app.get("/stats", async (req, res) => {
     }
 
     const downloads = (data || []).reduce(
-      (total, item) =>
-        total + Number(item.downloads || 0),
+      (total, script) => total + Number(script.downloads || 0),
       0
     );
 
@@ -722,28 +510,20 @@ app.get("/stats", async (req, res) => {
       scripts: data?.length || 0,
       downloads
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: "Failed to load stats"
     });
   }
 });
-
-/* =========================================================
-   SEARCH
-========================================================= */
 
 app.get("/search/:name", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("scripts")
       .select("*")
-      .ilike(
-        "filename",
-        `%${req.params.name}%`
-      );
+      .ilike("filename", `%${req.params.name}%`);
 
     if (error) {
       return res.status(500).json({
@@ -757,25 +537,23 @@ app.get("/search/:name", async (req, res) => {
       total: data?.length || 0,
       scripts: data || []
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: "Search failed"
     });
   }
 });
-
-/* =========================================================
-   LIST BY OWNER
-========================================================= */
 
 app.get("/list/:owner", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("scripts")
       .select("*")
-      .eq("owner", req.params.owner);
+      .eq("owner", req.params.owner)
+      .order("created", {
+        ascending: false
+      });
 
     if (error) {
       return res.status(500).json({
@@ -789,35 +567,23 @@ app.get("/list/:owner", async (req, res) => {
       total: data?.length || 0,
       scripts: data || []
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: "Failed to load scripts"
     });
   }
 });
 
-/* =========================================================
-   INFO
-========================================================= */
-
 app.get("/info/:id", async (req, res) => {
   try {
-    const id = req.params.id;
-
     const { data, error } = await supabase
       .from("scripts")
       .select("*")
-      .eq("id", id)
+      .eq("id", req.params.id)
       .maybeSingle();
 
     if (error) {
-      console.error(
-        "Info Supabase Error:",
-        error.message
-      );
-
       return res.status(500).json({
         success: false,
         message: error.message
@@ -831,39 +597,23 @@ app.get("/info/:id", async (req, res) => {
       });
     }
 
-    /*
-      สร้าง Loader จาก ID โดยตรง
-      ไม่จำเป็นต้องเพิ่ม column loader ใน Supabase
-    */
-
-    const loader = makeLoader(req, id);
-
     res.json({
       success: true,
-
       data: {
         ...data,
-        loader
+        loader: loaderFor(data.id)
       }
     });
-
   } catch (error) {
-    console.error("Info Error:", error);
-
     res.status(500).json({
       success: false,
-      message: error.message
+      message: "Failed to load script info"
     });
   }
 });
 
-/* =========================================================
-   DELETE
-========================================================= */
-
 app.delete("/delete/:id", async (req, res) => {
   try {
-    const id = req.params.id;
     const owner = req.query.owner;
 
     if (!owner) {
@@ -876,7 +626,7 @@ app.delete("/delete/:id", async (req, res) => {
     const { data, error } = await supabase
       .from("scripts")
       .select("*")
-      .eq("id", id)
+      .eq("id", req.params.id)
       .maybeSingle();
 
     if (error) {
@@ -900,28 +650,26 @@ app.delete("/delete/:id", async (req, res) => {
       });
     }
 
-    const { error: storageError } =
-      await supabase.storage
-        .from(BUCKET)
-        .remove([`${id}.lua`]);
+    const { error: storageError } = await supabase.storage
+      .from(BUCKET)
+      .remove([`${req.params.id}.lua`]);
 
     if (storageError) {
-      console.error(
-        "Storage Delete Error:",
-        storageError.message
-      );
-    }
-
-    const { error: dbError } =
-      await supabase
-        .from("scripts")
-        .delete()
-        .eq("id", id);
-
-    if (dbError) {
       return res.status(500).json({
         success: false,
-        message: dbError.message
+        message: storageError.message
+      });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("scripts")
+      .delete()
+      .eq("id", req.params.id);
+
+    if (deleteError) {
+      return res.status(500).json({
+        success: false,
+        message: deleteError.message
       });
     }
 
@@ -929,175 +677,118 @@ app.delete("/delete/:id", async (req, res) => {
       success: true,
       message: "Deleted"
     });
-
   } catch (error) {
-    console.error("Delete Error:", error);
-
     res.status(500).json({
       success: false,
-      message: error.message
+      message: "Delete failed"
     });
   }
 });
 
-/* =========================================================
-   UPDATE
-========================================================= */
+app.post("/update/:id", upload.single("file"), async (req, res) => {
+  try {
+    const owner = req.body.owner;
 
-app.post(
-  "/update/:id",
-  upload.single("file"),
-  async (req, res) => {
+    const { data, error: findError } = await supabase
+      .from("scripts")
+      .select("*")
+      .eq("id", req.params.id)
+      .maybeSingle();
 
-    try {
-
-      const id = req.params.id;
-      const owner = req.body.owner;
-
-      const { data, error } = await supabase
-        .from("scripts")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
-
-      if (error) {
-        return res.status(500).json({
-          success: false,
-          message: error.message
-        });
-      }
-
-      if (!data) {
-        return res.status(404).json({
-          success: false,
-          message: "Script Not Found"
-        });
-      }
-
-      if (data.owner !== owner) {
-        return res.status(403).json({
-          success: false,
-          message: "Permission Denied"
-        });
-      }
-
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: "No file"
-        });
-      }
-
-      const {
-        error: storageError
-      } = await supabase.storage
-        .from(BUCKET)
-        .upload(
-          `${id}.lua`,
-          req.file.buffer,
-          {
-            contentType: "text/plain",
-            upsert: true
-          }
-        );
-
-      if (storageError) {
-        return res.status(500).json({
-          success: false,
-          message: storageError.message
-        });
-      }
-
-      const {
-        error: updateError
-      } = await supabase
-        .from("scripts")
-        .update({
-          filename: req.file.originalname,
-          size: req.file.size
-        })
-        .eq("id", id);
-
-      if (updateError) {
-        return res.status(500).json({
-          success: false,
-          message: updateError.message
-        });
-      }
-
-      res.json({
-        success: true,
-        loader: makeLoader(req, id)
-      });
-
-    } catch (error) {
-
-      console.error(
-        "Update Error:",
-        error
-      );
-
-      res.status(500).json({
+    if (findError) {
+      return res.status(500).json({
         success: false,
-        message: error.message
+        message: findError.message
       });
     }
-  }
-);
 
-/* =========================================================
-   SUPABASE TEST
-========================================================= */
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        message: "Script Not Found"
+      });
+    }
+
+    if (data.owner !== owner) {
+      return res.status(403).json({
+        success: false,
+        message: "Permission Denied"
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No file"
+      });
+    }
+
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .upload(
+        `${req.params.id}.lua`,
+        req.file.buffer,
+        {
+          contentType: "text/plain",
+          upsert: true
+        }
+      );
+
+    if (uploadError) {
+      return res.status(500).json({
+        success: false,
+        message: uploadError.message
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from("scripts")
+      .update({
+        filename: req.file.originalname,
+        size: req.file.size
+      })
+      .eq("id", req.params.id);
+
+    if (updateError) {
+      return res.status(500).json({
+        success: false,
+        message: updateError.message
+      });
+    }
+
+    res.json({
+      success: true,
+      loader: loaderFor(req.params.id)
+    });
+  } catch (error) {
+    console.error("Update Error:", error.message);
+
+    res.status(500).json({
+      success: false,
+      message: "Update failed"
+    });
+  }
+});
 
 (async () => {
-
   try {
-
-    const {
-      error
-    } = await supabase
+    const { error } = await supabase
       .from("scripts")
       .select("id")
       .limit(1);
 
     if (error) {
-
-      console.error(
-        "Supabase Error:",
-        error.message
-      );
-
+      console.error("Supabase Error:", error.message);
     } else {
-
-      console.log(
-        "Supabase Connected"
-      );
-
+      console.log("Supabase Connected");
     }
-
   } catch (error) {
-
-    console.error(
-      "Supabase Connection Error:",
-      error.message
-    );
-
+    console.error("Supabase Error:", error.message);
   }
-
 })();
 
-/* =========================================================
-   SERVER
-========================================================= */
+const PORT = process.env.PORT || 3000;
 
-const PORT =
-  process.env.PORT || 3000;
-
-app.listen(
-  PORT,
-  () => {
-    console.log(
-      "Server Running : " + PORT
-    );
-  }
-);
+app.listen(PORT, () => {
+  console.log("Server Running : " + PORT);
+});
