@@ -1,3 +1,19 @@
+/*
+  SUPABASE — สร้าง table keys ก่อน:
+
+  CREATE TABLE keys (
+    id          uuid        DEFAULT gen_random_uuid() PRIMARY KEY,
+    key         text        UNIQUE NOT NULL,
+    owner       text        NOT NULL,
+    expires_at  timestamptz,
+    active      boolean     DEFAULT true,
+    created_at  timestamptz DEFAULT now()
+  );
+
+  ENV ที่ต้องเพิ่ม:
+    BOT_SECRET=<สุ่มสตริงอะไรก็ได้ ใส่ใน bot.py ด้วย>
+*/
+
 require("dotenv").config();
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
@@ -33,6 +49,9 @@ const BASE_URL = (
   "https://ui-f.onrender.com"
 ).replace(/\/+$/, "");
 
+const BOT_SECRET =
+  process.env.BOT_SECRET || "";
+
 const LOGO_URL =
   "https://cdn.discordapp.com/attachments/1448285099421335623/1537103402314502266/83_20260811161648.png?ex=6a7e7b59&is=6a7d29d9&hm=42ce3e94389bc1852b1d676f81a93c797a91963fa416369e11e0286abc78424f&";
 
@@ -46,8 +65,20 @@ const upload = multer({
   }
 });
 
+// ---------- helpers ----------
+
 function loaderFor(id) {
-  return `loadstring(game:HttpGet("${BASE_URL}/script/${id}"))()`;
+  return `loadstring(game:HttpGet("${BASE_URL}/script/${id}?key=YOUR_KEY"))()`;
+}
+
+function generateKey() {
+  const seg = () =>
+    crypto
+      .randomBytes(3)
+      .toString("hex")
+      .toUpperCase();
+
+  return `SEI-${seg()}-${seg()}-${seg()}`;
 }
 
 async function makeID() {
@@ -73,6 +104,50 @@ async function makeID() {
     }
   }
 }
+
+async function validateKey(key) {
+  if (!key || !key.trim()) {
+    return {
+      valid: false,
+      reason: "missing"
+    };
+  }
+
+  const {
+    data,
+    error
+  } = await supabase
+    .from("keys")
+    .select("*")
+    .eq("key", key.trim())
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error || !data) {
+    return {
+      valid: false,
+      reason: "invalid"
+    };
+  }
+
+  if (
+    data.expires_at &&
+    new Date(data.expires_at) < new Date()
+  ) {
+    return {
+      valid: false,
+      reason: "expired",
+      data
+    };
+  }
+
+  return {
+    valid: true,
+    data
+  };
+}
+
+// ---------- static assets ----------
 
 const DISCORD_SVG = `
 <svg
@@ -549,6 +624,8 @@ SEI HUB • Secure Script Distribution
 `;
 }
 
+// ---------- routes ----------
+
 app.get("/", async (req, res) => {
 
   try {
@@ -926,6 +1003,40 @@ app.get(
           .send(protectedPage());
       }
 
+      // ---------- key validation ----------
+
+      const keyParam =
+        req.query.key;
+
+      if (!keyParam) {
+
+        return res
+          .status(401)
+          .type("text/plain")
+          .send(
+            "SEI HUB: Key required. " +
+            "Contact the script owner for a key."
+          );
+      }
+
+      const keyResult =
+        await validateKey(keyParam);
+
+      if (!keyResult.valid) {
+
+        const msg =
+          keyResult.reason === "expired"
+            ? "SEI HUB: Key expired. Contact the script owner."
+            : "SEI HUB: Invalid key. Contact the script owner.";
+
+        return res
+          .status(403)
+          .type("text/plain")
+          .send(msg);
+      }
+
+      // ---------- serve script ----------
+
       const {
         data: fileBlob,
         error: dlError
@@ -972,6 +1083,256 @@ app.get(
     }
   }
 );
+
+// ---------- key endpoints ----------
+
+app.post(
+  "/genkey",
+  async (req, res) => {
+
+    try {
+
+      const {
+        owner,
+        days,
+        secret
+      } = req.body;
+
+      if (
+        !BOT_SECRET ||
+        secret !== BOT_SECRET
+      ) {
+
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden"
+        });
+      }
+
+      if (!owner || !owner.trim()) {
+
+        return res.status(400).json({
+          success: false,
+          message: "Owner required"
+        });
+      }
+
+      const key = generateKey();
+
+      const expires_at =
+        days && Number(days) > 0
+          ? new Date(
+              Date.now() +
+              Number(days) * 86_400_000
+            ).toISOString()
+          : null;
+
+      const {
+        error
+      } = await supabase
+        .from("keys")
+        .insert({
+          key,
+          owner: owner.trim(),
+          expires_at,
+          active: true,
+          created_at: new Date().toISOString()
+        });
+
+      if (error) {
+
+        return res.status(500).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      res.json({
+        success: true,
+        key,
+        expires_at
+      });
+
+    } catch (error) {
+
+      console.error(
+        "GenKey Error:",
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to generate key"
+      });
+    }
+  }
+);
+
+app.get(
+  "/mykey/:owner",
+  async (req, res) => {
+
+    try {
+
+      const {
+        data,
+        error
+      } = await supabase
+        .from("keys")
+        .select("key, expires_at, created_at, active")
+        .eq("owner", req.params.owner)
+        .eq("active", true)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+
+        return res.status(500).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      // filter out expired keys from response
+      const now = new Date();
+
+      const keys = (data || []).filter(
+        (k) =>
+          !k.expires_at ||
+          new Date(k.expires_at) > now
+      );
+
+      res.json({
+        success: true,
+        keys
+      });
+
+    } catch (error) {
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to load keys"
+      });
+    }
+  }
+);
+
+app.get(
+  "/validate/:key",
+  async (req, res) => {
+
+    try {
+
+      const result =
+        await validateKey(req.params.key);
+
+      if (!result.valid) {
+
+        return res.status(
+          result.reason === "missing" ? 400 : 403
+        ).json({
+          success: true,
+          valid: false,
+          message:
+            result.reason === "expired"
+              ? "Key expired"
+              : "Invalid key"
+        });
+      }
+
+      res.json({
+        success: true,
+        valid: true,
+        owner: result.data.owner,
+        expires_at: result.data.expires_at
+      });
+
+    } catch (error) {
+
+      res.status(500).json({
+        success: false,
+        valid: false,
+        message: "Validation failed"
+      });
+    }
+  }
+);
+
+app.delete(
+  "/revokekey/:key",
+  async (req, res) => {
+
+    try {
+
+      const secret =
+        req.query.secret;
+
+      if (
+        !BOT_SECRET ||
+        secret !== BOT_SECRET
+      ) {
+
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden"
+        });
+      }
+
+      const {
+        data: existing,
+        error: findError
+      } = await supabase
+        .from("keys")
+        .select("id")
+        .eq("key", req.params.key)
+        .maybeSingle();
+
+      if (findError) {
+
+        return res.status(500).json({
+          success: false,
+          message: findError.message
+        });
+      }
+
+      if (!existing) {
+
+        return res.status(404).json({
+          success: false,
+          message: "Key not found"
+        });
+      }
+
+      const {
+        error
+      } = await supabase
+        .from("keys")
+        .update({ active: false })
+        .eq("key", req.params.key);
+
+      if (error) {
+
+        return res.status(500).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Revoked"
+      });
+
+    } catch (error) {
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to revoke key"
+      });
+    }
+  }
+);
+
+// ---------- existing endpoints (unchanged) ----------
 
 app.get(
   "/scripts",
@@ -1564,6 +1925,8 @@ app.post(
     }
   }
 );
+
+// ---------- boot ----------
 
 (async () => {
 
