@@ -1,5 +1,5 @@
 /*
-  SUPABASE — สร้าง table keys ก่อน:
+  SUPABASE — สร้าง 2 table นี้ก่อน:
 
   CREATE TABLE keys (
     id          uuid        DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -10,8 +10,17 @@
     created_at  timestamptz DEFAULT now()
   );
 
+  CREATE TABLE key_tasks (
+    id          uuid        DEFAULT gen_random_uuid() PRIMARY KEY,
+    discord_id  text        NOT NULL,
+    task_url    text,
+    completed   boolean     DEFAULT false,
+    created_at  timestamptz DEFAULT now()
+  );
+
   ENV ที่ต้องเพิ่ม:
     BOT_SECRET=<สุ่มสตริงอะไรก็ได้ ใส่ใน bot.py ด้วย>
+    LOOTLABS_API_KEY=7dc59a565dfdb62f6228af1cd7295b3f0495d2f2b37db44a32f62a19c8b3bbd2
 */
 
 require("dotenv").config();
@@ -51,6 +60,9 @@ const BASE_URL = (
 
 const BOT_SECRET =
   process.env.BOT_SECRET || "";
+
+const LOOTLABS_API_KEY =
+  process.env.LOOTLABS_API_KEY || "";
 
 const LOGO_URL =
   "https://cdn.discordapp.com/attachments/1448285099421335623/1537103402314502266/83_20260811161648.png?ex=6a7e7b59&is=6a7d29d9&hm=42ce3e94389bc1852b1d676f81a93c797a91963fa416369e11e0286abc78424f&";
@@ -1922,6 +1934,379 @@ app.post(
           "Update failed"
 
       });
+    }
+  }
+);
+
+// ---------- lootlabs ----------
+
+async function createLootlabsTask(
+  discordId
+) {
+
+  const redirectUrl =
+    `${BASE_URL}/lootlabs/complete` +
+    `?user=${encodeURIComponent(discordId)}`;
+
+  const response = await fetch(
+    "https://lootlabs.gg/api/publisher/tasks",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/json",
+        "api-key":
+          LOOTLABS_API_KEY
+      },
+      body: JSON.stringify({
+        title:
+          "SEI HUB - Get your script key",
+        tasks_amount: 1,
+        url: redirectUrl
+      })
+    }
+  );
+
+  if (!response.ok) {
+
+    const text =
+      await response.text();
+
+    throw new Error(
+      `Lootlabs API ${response.status}: ` +
+      text.slice(0, 200)
+    );
+  }
+
+  const data =
+    await response.json();
+
+  // content_url = newer Lootlabs, task_url = older
+  const taskUrl =
+    data.content_url ||
+    data.task_url ||
+    data.url;
+
+  if (!taskUrl) {
+    throw new Error(
+      "Lootlabs did not return a task URL"
+    );
+  }
+
+  return taskUrl;
+}
+
+function lootlabsPage(
+  title,
+  badgeText,
+  statusTitle,
+  statusText,
+  key = null
+) {
+
+  const keyBlock = key
+    ? `
+<div class="status" style="margin-top:18px;background:rgba(0,40,10,.6);border-color:rgba(100,255,100,.2);">
+<div class="status-title">YOUR KEY</div>
+<div class="status-text" style="font-family:monospace;font-size:18px;color:#4ade80;letter-spacing:2px;">${key}</div>
+</div>
+<p style="margin-top:16px;color:#94a3b8;font-size:14px;">
+ไปที่ Discord แล้วพิมพ์ <strong style="color:#60a5fa">/mykey</strong> เพื่อดู Key ของคุณอีกครั้ง
+</p>`
+    : "";
+
+  return `
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} — SEI HUB</title>
+<style>${SHARED_CSS}</style>
+</head>
+<body>
+<div class="page">
+<div class="box">
+<img class="logo" src="${LOGO_URL}" alt="SEI HUB">
+<div class="badge">${badgeText}</div>
+<h1>SEI HUB</h1>
+<div class="status">
+<div class="status-title">${statusTitle}</div>
+<div class="status-text">${statusText}</div>
+</div>
+${keyBlock}
+<a class="discord-btn" href="${DISCORD_URL}" target="_blank" rel="noopener noreferrer">
+${DISCORD_SVG}
+<div class="discord-text">
+<div class="discord-title">Join Developer Discord</div>
+<div class="discord-sub">discord.gg/n3xY3YuwuQ</div>
+</div>
+</a>
+<hr class="divider">
+<div class="footer">
+<strong>Developer Discord</strong><br>
+<a href="${DISCORD_URL}" target="_blank" rel="noopener noreferrer">${DISCORD_URL}</a>
+<br><br>SEI HUB • Secure Script Distribution
+</div>
+</div>
+</div>
+</body>
+</html>
+`;
+}
+
+// POST /lootlabs/task
+// Discord bot calls this to get a Lootlabs task link for a user
+app.post(
+  "/lootlabs/task",
+  async (req, res) => {
+
+    try {
+
+      const {
+        discord_id,
+        secret
+      } = req.body;
+
+      if (
+        !BOT_SECRET ||
+        secret !== BOT_SECRET
+      ) {
+
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden"
+        });
+      }
+
+      if (
+        !discord_id ||
+        !discord_id.trim()
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message: "discord_id required"
+        });
+      }
+
+      if (!LOOTLABS_API_KEY) {
+
+        return res.status(500).json({
+          success: false,
+          message: "Lootlabs not configured on server"
+        });
+      }
+
+      const ownerId =
+        discord_id.trim();
+
+      // Already has an active non-expired key — just return it
+      const {
+        data: existingKey
+      } = await supabase
+        .from("keys")
+        .select("key, expires_at")
+        .eq("owner", ownerId)
+        .eq("active", true)
+        .maybeSingle();
+
+      if (existingKey) {
+
+        const expired =
+          existingKey.expires_at &&
+          new Date(existingKey.expires_at) < new Date();
+
+        if (!expired) {
+
+          return res.json({
+            success: true,
+            already_has_key: true,
+            key: existingKey.key
+          });
+        }
+      }
+
+      // Pending task created in the last 10 minutes — reuse it
+      const {
+        data: pendingTask
+      } = await supabase
+        .from("key_tasks")
+        .select("task_url, created_at")
+        .eq("discord_id", ownerId)
+        .eq("completed", false)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pendingTask) {
+
+        const ageMs =
+          Date.now() -
+          new Date(pendingTask.created_at).getTime();
+
+        if (ageMs < 10 * 60_000) {
+
+          return res.json({
+            success: true,
+            pending: true,
+            task_url: pendingTask.task_url
+          });
+        }
+      }
+
+      // Create new Lootlabs task
+      const taskUrl =
+        await createLootlabsTask(ownerId);
+
+      await supabase
+        .from("key_tasks")
+        .insert({
+          discord_id: ownerId,
+          task_url: taskUrl,
+          completed: false,
+          created_at: new Date().toISOString()
+        });
+
+      res.json({
+        success: true,
+        task_url: taskUrl
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Lootlabs Task Error:",
+        error.message
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          "Failed to create Lootlabs task"
+      });
+    }
+  }
+);
+
+// GET /lootlabs/complete
+// Lootlabs redirects the user here after they finish tasks
+app.get(
+  "/lootlabs/complete",
+  async (req, res) => {
+
+    try {
+
+      const discordId =
+        String(req.query.user || "").trim();
+
+      if (!discordId) {
+
+        return res
+          .status(400)
+          .send(lootlabsPage(
+            "Error",
+            "ERROR",
+            "MISSING USER",
+            "ไม่พบ Discord ID กรุณาลองใหม่อีกครั้ง"
+          ));
+      }
+
+      // Idempotent — already has a valid key
+      const {
+        data: existingKey
+      } = await supabase
+        .from("keys")
+        .select("key, expires_at")
+        .eq("owner", discordId)
+        .eq("active", true)
+        .maybeSingle();
+
+      if (existingKey) {
+
+        const expired =
+          existingKey.expires_at &&
+          new Date(existingKey.expires_at) < new Date();
+
+        if (!expired) {
+
+          return res.send(
+            lootlabsPage(
+              "Key Ready",
+              "KEY READY",
+              "มี Key อยู่แล้ว",
+              "ไม่จำเป็นต้องทำ Task ซ้ำ",
+              existingKey.key
+            )
+          );
+        }
+      }
+
+      // Generate and store new key
+      const newKey = generateKey();
+
+      const {
+        error: insertError
+      } = await supabase
+        .from("keys")
+        .insert({
+          key: newKey,
+          owner: discordId,
+          expires_at: null,
+          active: true,
+          created_at: new Date().toISOString()
+        });
+
+      if (insertError) {
+
+        console.error(
+          "Lootlabs Complete Insert Error:",
+          insertError.message
+        );
+
+        return res
+          .status(500)
+          .send(lootlabsPage(
+            "Error",
+            "ERROR",
+            "GENERATION FAILED",
+            "สร้าง Key ไม่สำเร็จ กรุณาติดต่อเจ้าของ"
+          ));
+      }
+
+      // Mark pending tasks as completed
+      await supabase
+        .from("key_tasks")
+        .update({ completed: true })
+        .eq("discord_id", discordId)
+        .eq("completed", false);
+
+      res.send(
+        lootlabsPage(
+          "Key Unlocked",
+          "KEY UNLOCKED",
+          "สำเร็จแล้ว 🎉",
+          "ทำ Task เสร็จแล้ว Key ของคุณพร้อมใช้งาน",
+          newKey
+        )
+      );
+
+    } catch (error) {
+
+      console.error(
+        "Lootlabs Complete Error:",
+        error.message
+      );
+
+      res
+        .status(500)
+        .send(lootlabsPage(
+          "Error",
+          "SERVER ERROR",
+          "เกิดข้อผิดพลาด",
+          "กรุณาติดต่อเจ้าของ Discord"
+        ));
     }
   }
 );
